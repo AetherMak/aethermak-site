@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AetherMak • Unified Y-DNA Lineage Ladder (Paste-your-CSV)</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#111; --muted:#60646c; --card:#fafafa; --line:#e9eef3; --pill:#eef2f7; --accent:#0b5fff;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Inter,Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  header,.wrap{max-width:980px;margin:0 auto;padding:16px}
+  header{background:var(--card);border-bottom:1px solid var(--line)}
+  h1{margin:0 0 6px 0}
+  .pill{display:inline-block;background:var(--pill);border-radius:24px;padding:6px 10px;font-size:12px;margin:2px 6px 2px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin:12px 0;overflow:auto}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .col{flex:1 1 320px}
+  textarea{width:100%;min-height:160px;border:1px solid var(--line);border-radius:10px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#fff}
+  button{appearance:none;border:0;background:var(--accent);color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:6px 8px;text-align:left}
+  .breadcrumb{background:#f4f7fb;border-radius:10px;padding:12px;margin:8px 0;word-wrap:break-word;font-size:14px}
+  .mut{display:inline-block;background:#eaf7ee;border:1px solid #d5eddc;border-radius:16px;padding:4px 10px;margin:2px;font-size:12px}
+  .note{color:var(--muted);font-size:12px}
+  .tiny{font-size:11px;color:var(--muted)}
+  .footer{padding:24px 16px;border-top:1px solid var(--line);text-align:center}
+  @media (max-width:520px){ h1{font-size:20px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧬 AetherMak • Unified Y-DNA Lineage Ladder</h1>
+  <div id="ast" class="tiny"></div>
+  <div class="note">Paste your two CSVs below (exactly as exported). Expected columns (case-lenient): <b>Type, Position, SNP, Derived, OnTree, Reference, Genotype</b>. Values for <b>OnTree</b> should be Yes/No.</div>
+</header>
+
+<div class="wrap">
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <h3>① Paste <span class="pill">BigY_Derived.csv</span></h3>
+        <textarea id="derivedTA" placeholder="Paste the FULL content of BigY_Derived.csv here..."></textarea>
+        <div class="tiny">Contains: Derived (Yes/No or Yes(+)), OnTree, Reference, Genotype, Position (if available).</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card">
+        <h3>② Paste <span class="pill">BigY_Ancestral.csv</span></h3>
+        <textarea id="ancestralTA" placeholder="Paste the FULL content of BigY_Ancestral.csv here..."></textarea>
+        <div class="tiny">Contains: Derived = No(–) for ancestral-state SNPs, OnTree, etc.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <button id="buildBtn">Build Unified Ladder</button>
+    <span class="tiny">Your data never leaves this page. All parsing happens locally in your browser.</span>
+  </div>
+
+  <div class="card">
+    <h2>🌳 Breadcrumb Ladder (Ancestral → Derived)</h2>
+    <div id="ladder" class="breadcrumb">—</div>
+    <div id="ladderPills"></div>
+    <p class="note">Ancestral OnTree SNPs confirm upstream clades. Derived OnTree SNPs anchor your branch (e.g., J-FTA31875). Private derived SNPs uniquely fingerprint your paternal line (listed below).</p>
+    <div>
+      <span id="cTotal" class="pill">Total SNPs: —</span>
+      <span id="cDerOT" class="pill">Derived OnTree: —</span>
+      <span id="cDerPriv" class="pill">Derived Private: —</span>
+      <span id="cAncOT" class="pill">Ancestral OnTree: —</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📜 Ancestral OnTree SNPs (Upstream rungs)</h3>
+    <div id="ancTable">—</div>
+  </div>
+
+  <div class="card">
+    <h3>✅ Derived OnTree SNPs (Haplogroup anchors)</h3>
+    <div id="derOTTable">—</div>
+  </div>
+
+  <div class="card">
+    <h3>🔐 Private Derived SNPs (Sovereign anchors)</h3>
+    <div id="derPrivTable">—</div>
+    <p class="note">Private SNPs act as sovereign anchors. With your STRs and a family modal, these can define sub-branches and inform rough TMRCA bands.</p>
+  </div>
+</div>
+
+<div class="footer tiny">
+  <div>AST timestamp generated locally • AetherMak lineage ladder (Derived + Ancestral)</div>
+</div>
+
+<script>
+(function(){
+  const ast = new Date().toLocaleString(undefined, {hour12:false});
+  document.getElementById('ast').textContent = 'AST: ' + ast;
+
+  function csvParse(text){
+    // tolerant CSV parser (no quotes/escapes needed for BigY exports)
+    const lines = text.trim().split(/\r?\n/).filter(Boolean);
+    if(lines.length===0) return [];
+    const headers = lines[0].split(',').map(h => h.trim());
+    return lines.slice(1).map(row => {
+      const parts = row.split(',');
+      const obj = {};
+      headers.forEach((h,i)=> obj[h.trim()] = (parts[i]||'').trim());
+      return obj;
+    });
+  }
+
+  function normRow(r){
+    const map = {
+      'snpname':'snp','snp':'snp',
+      'position':'position',
+      'derived':'derived',
+      'ontree':'ontree',
+      'reference':'ref',
+      'genotype':'genotype',
+      'type':'type'
+    };
+    const out = {};
+    for (const k in r){
+      const key = (k||'').toLowerCase();
+      const m = map[key];
+      if (m) out[m] = (r[k]||'').trim();
+    }
+    // defaults
+    out.snp = out.snp || '';
+    out.position = out.position || '';
+    out.derived = out.derived || '';
+    out.ontree = (out.ontree||'').toLowerCase();
+    out.ref = out.ref || '';
+    out.genotype = out.genotype || '';
+    out.type = out.type || '';
+    return out;
+  }
+
+  function toTable(rows){
+    if (!rows.length) return '<p>—</p>';
+    const cols = ['snp','position','ref','genotype','derived','ontree'];
+    const th = '<tr>'+cols.map(c=>'<th>'+c.toUpperCase()+'</th>').join('')+'</tr>';
+    const trs = rows.map(r=>'<tr>'+cols.map(c=>'<td>'+ (r[c]||'') +'</td>').join('')+'</tr>').join('');
+    return '<div style="overflow:auto"><table>'+th+trs+'</table></div>';
+  }
+
+  function build(){
+    const derRaw = csvParse(document.getElementById('derivedTA').value||'');
+    const ancRaw = csvParse(document.getElementById('ancestralTA').value||'');
+
+    const der = derRaw.map(normRow);
+    const anc = ancRaw.map(normRow);
+
+    const derOn = der.filter(r => r.ontree==='yes');
+    const derPriv = der.filter(r => r.ontree==='no' || r.ontree==='');
+    const ancOn = anc.filter(r => r.ontree==='yes');
+
+    // ladder (order: ancestral then derived on-tree; keep input order)
+    const ladderList = [...ancOn.map(r=>r.snp), ...derOn.map(r=>r.snp)].filter(Boolean);
+    document.getElementById('ladder').textContent = ladderList.length ? ladderList.join(' → ') : 'No OnTree SNPs found in either file';
+
+    // pills
+    const pillHTML = ladderList.map(s=>'<span class="mut">'+s+'</span>').join('');
+    document.getElementById('ladderPills').innerHTML = pillHTML || '<span class="tiny">—</span>';
+
+    // counts
+    const cTotal = der.length + anc.length;
+    document.getElementById('cTotal').textContent = 'Total SNPs: ' + cTotal;
+    document.getElementById('cDerOT').textContent = 'Derived OnTree: ' + derOn.length;
+    document.getElementById('cDerPriv').textContent = 'Derived Private: ' + derPriv.length;
+    document.getElementById('cAncOT').textContent = 'Ancestral OnTree: ' + ancOn.length;
+
+    // tables
+    document.getElementById('ancTable').innerHTML = toTable(ancOn);
+    document.getElementById('derOTTable').innerHTML = toTable(derOn);
+    document.getElementById('derPrivTable').innerHTML = toTable(derPriv);
+  }
+
+  document.getElementById('buildBtn').addEventListener('click', build);
+})();
+</script>
+</body>
+</html>
